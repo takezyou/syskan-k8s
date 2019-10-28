@@ -67,5 +67,103 @@ $ kubectl apply -f bastion.yaml
 # nginxのIPアドレスの確認
 $ kubectl get pod -o wide
 
+# コンテナにアクセス
 $ kubectl exec -it bastion bash
+root@bastion:/# apt update && apt install -y curl
+root@bastion:/# curl -i http://10.1.0.48/
 ```
+
+## Serviceを使って他のPodにアクセスする
+Serviceを使うと特定のラベルをもつPodのどれかにアクセスすることができる。
+
+```
+# nginx-service.yaml
+$ vim nginx-service.yaml
+
+###
+apiVersion: v1
+kind: Service
+metadata:
+  name: my-first-service
+spec:
+  selector: ①
+    component: nginx
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 80
+###
+
+$ kubectl apply -f nginx-service.yaml
+$ kubectl get service
+
+$ kubectl exec -it bastion bash
+root@bastion:/# curl -i http://my-first-service/
+```
+
+1. セレクタに指定したラベルにマッチするPodにServiceへのアクセスが割り振られます
+
+今回は`component: nginx`というラベルを持つPodは一つしかなかったが，Podが10個あった時にmy-first-serviceに対してTCPコネクションを張るたびに10個のPodのうちにいずれかに繋がります。リバースプロキシみたいなもの。
+
+Serviceのラベルセレクタによって，リバプロされるPodの集合が決まります。ラベルセレクタには複数のラベルを指定するとそれら全てのラベルをもつPodがセレクトされる。
+ラベルは，キーと値で好きな文字列を指定でき，ひとつのPodに複数個のラベルを不要すrことも可能です。
+
+## 同じPodをいくつもたてる
+実際の運用環境では冗長性やスケーラビリティのために1つのサービスを複数台のPodで構成することが一般的です。
+ReplicaSetというオブジェクトを利用してnginxを指定した台数だけ立ち上げる。
+
+```
+# nginx-replicaset.yaml
+$ vim nginx-replicaset.yaml
+
+###
+apiVersion: apps/v1
+kind: ReplicaSet
+metadata:
+  name: nginx-replicaset
+  labels:
+    component: nginx
+spec:
+  replicas: 3 ①
+  selector: ②
+    matchLabels:
+      component: nginx
+  template: ③
+    metadata:
+      labels:
+        component: nginx
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:latest
+###
+
+# 現在のPodの状態を確認
+$ kubectl get pod
+
+# ReplicaSetを作成
+$ kubectl apply -f nginx-replicaset.yaml
+
+# 確認
+$ kubectl get replicaset
+$ kubectl get pod
+```
+
+1. レプリカ数。この数だけでPodを立てる
+1. ここに指定した条件に一致するPodをこのReplicaSetが管理する
+1. このReplicaSetが作成するPodの定義
+
+ReplicaSetは`selector`にマッチするPodの数がreplicasに指定した数になるようにPodを自動的にデプロイしたり削除したりするオブジェクトです。
+
+ReplicaSetがapplyされた時，`component: nginx`というラベルを持っていたPodは`my-first-pod`1つだけで，`replicas`が3に指定されていたのでnginxが2つ追加でデプロイされます。
+
+
+デプロイされるPodは`template`で指定された定義で作られる。
+
+`my-first-pod`を削除してみよう。
+
+```
+$ kubectl delete pod my-first-pod
+$ kubectl get pod
+```
+
