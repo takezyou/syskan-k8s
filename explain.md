@@ -167,3 +167,130 @@ $ kubectl delete pod my-first-pod
 $ kubectl get pod
 ```
 
+ReplicaSetは定義されたレプリカ数と実際のレプリカ数が一致するようにPodをデプロイしたり削除してくれたりします。
+
+
+## ローリングアップデートする
+無停止でアプリケーションを更新する手段としてよく利用されるのがローリングアップデートです。
+
+ローリングアップデートを行うにはDploymentというオブジェクトを利用します。
+DeploymentはReplicaSetといているが，ReplicaSetと違ってアプデートがサポートされています。
+
+```
+# 紛らわしくなるのでReplicaSetを削除する
+$ kubectl delete replicaset nginx-replicaset
+$ kubectl get pod
+
+# nginx-deployment.yaml
+$ vim nginx-deployment.yaml
+
+###
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+  labels:
+    component: nginx
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      component: nginx
+  template:
+    metadata:
+      labels:
+        component: nginx
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.15
+###
+
+$ kubectl apply -f nginx-deployment.yaml
+
+# 確認する(バージョンを確認するためにIMAGEを表示します)
+$ kubectl get pod -o 'custom-columns=NAME:.metadata.name,IMAGE:.spec.containers[*].image,PHASE:.status.phase'
+
+# nginx: 1.15をnginx: 1.16に書き換える
+$ vim nginx-deployment.yaml
+
+$ kubectl apply -f nginx-deployment.yaml
+
+# 確認
+$ kubectl get pod -o 'custom-columns=NAME:.metadata.name,IMAGE:.spec.containers[*].image,PHASE:.status.phase'
+```
+
+大抵の場合は，Deploymentを使ってPodを作成します。Podだけの場合ノードが死ぬとPodも道連れになってしまうためです。
+
+## サービスをクラスタの外部に公開する
+Kubernetes上にデプロイされたサービスをKubernetesクラスタの外部に公開する方法はいくつかありますが，ここでは最も簡単なNodePortを使います。
+
+```
+# nginx-service.yamlを書き換える
+$ vim nginx-service.yaml
+
+###
+apiVersion: v1
+kind: Service
+metadata:
+  name: my-first-service
+spec:
+  selector:
+    component: nginx
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 80
+    nodePort: 30000
+  type: NodePort
+###
+
+$ kubectl apply -f nginx-service.yaml
+
+$ kubectl get service my-first-service
+
+# minikubeの場合
+$ minikube ip
+
+# 確認
+$ open http://localhost:30000/
+```
+
+NodePort型のServiceを使うと，ノードの指定したポート経由でサービスにアクセスできるようになります。
+
+全てのノードで，指定したポートが指定したサービスにルーティングされるようになる。
+
+## Podをデバッグする
+`kubectl exec`や`kubectl descrive`がPodのデバッグに役立ちます。
+これに加えて`kubectl logs`と`kubectl port-forward`を利用します。
+
+### コンテナのログをみる
+コンテナが標準出力・標準エラー出力に書き出したログを`kubectl logs`コマンドで確認します。`-f`オプションをつけると`tail -f`のようにログを流してくれます。
+
+```
+$ kubectl get pod
+
+$ kubectl logs nginx-deployment-6fb8fbbfc8-rcvfw 
+
+$ kubectl logs -f nginx-deployment-6fb8fbbfc8-rcvfw 
+```
+
+しかし，`kubectl logs`は一つのコンテナのログしか表示してくれません。複数のコンテナのログを一度にみたい場合は[stern](https://github.com/wercker/stern)が便利です。
+
+```
+# install stern
+$ brew install stern
+
+$ stern "nginx-deployment-\w"
+```
+
+詳しい使い方はQiitaとかgithub見てみてください！
+
+### ポートフォワードする
+`kubectl port-forward`コマンドを使うと，Podの特定のポートをローカルホストにポートフォワードすることができます。
+
+```
+$ kubectl port-forward deployment/nginx-deployment 8080:80
+$ curl http://localhost:8080
+```
+
